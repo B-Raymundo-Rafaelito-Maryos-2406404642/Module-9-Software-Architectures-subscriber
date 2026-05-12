@@ -1,37 +1,75 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use crosstown_bus::{CrosstownBus, MessageHandler, HandleError};
-use std::{thread, time};
-#
-[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
+use lapin::{Connection, ConnectionProperties, options::BasicConsumeOptions};
+use futures_lite::stream::StreamExt;
 
+#[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
 pub struct UserCreatedEventMessage {
     pub user_id: String,
-    pub user_name: String
+    pub user_name: String,
 }
 
-pub struct UserCreatedHandler;
 
-impl MessageHandler<UserCreatedEventMessage> for UserCreatedHandler {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let conn = Connection::connect(
+        "amqp://guest:guest@localhost:5672",
+        ConnectionProperties::default(),
+    )
+    .await?;
 
-    fn handle(&self, message: Box<UserCreatedEventMessage>) -> Result<(), HandleError> {
-        let ten_millis = time::Duration::from_millis(1000);
-        let now = time::Instant::now();
-        
-        // thread::sleep(ten_millis);
-        
-        println!("In Raymundo’s Computer [2406404642]. Message received: {:?}", message);
-        Ok(())
-    }
+    let channel = conn.create_channel().await?;
     
-    fn get_handler_action(&self) -> String {
-        todo!()
-    }
-}
+    // Declare queue
+    let _queue = channel
+        .queue_declare(
+            "user_created_queue",
+            lapin::options::QueueDeclareOptions::default(),
+            lapin::types::FieldTable::default(),
+        )
+        .await?;
 
-fn main() {
-    let listener = CrosstownBus::new_queue_listener("amqp://guest:guest@localhost:5672".to_owned()).unwrap();
-    _ = listener.listen("user_created".to_owned(), UserCreatedHandler{}, crosstown_bus::QueueProperties { auto_delete: false, durable: false, use_dead_letter: true });
+    // Bind queue to exchange
+    channel
+        .queue_bind(
+            "user_created_queue",
+            "user_created",
+            "user.created",
+            lapin::options::QueueBindOptions::default(),
+            lapin::types::FieldTable::default(),
+        )
+        .await?;
+
+    // Consume messages
+    let mut consumer = channel
+        .basic_consume(
+            "user_created_queue",
+            "subscriber",
+            BasicConsumeOptions::default(),
+            lapin::types::FieldTable::default(),
+        )
+        .await?;
+
+    println!("Listening for messages...");
     
-    loop {
+    while let Some(delivery) = consumer.next().await {
+        match delivery {
+            Ok(delivery) => {
+                match UserCreatedEventMessage::try_from_slice(&delivery.data) {
+                    Ok(msg) => {
+                        println!("In Raymundo's Computer [2406404642]. Message received: {:?}", msg);
+                    }
+                    Err(_) => {
+                        eprintln!("Failed to deserialize message");
+                    }
+                }
+                delivery.ack(lapin::options::BasicAckOptions::default()).await?;
+            }
+            Err(e) => {
+                eprintln!("Error: {:?}", e);
+                break;
+            }
+        }
     }
+
+    Ok(())
 }
