@@ -1,3 +1,4 @@
+use std::{thread, time};
 use borsh::{BorshDeserialize, BorshSerialize};
 use lapin::{Connection, ConnectionProperties, options::BasicConsumeOptions};
 use futures_lite::stream::StreamExt;
@@ -56,6 +57,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(delivery) => {
                 match UserCreatedEventMessage::try_from_slice(&delivery.data) {
                     Ok(msg) => {
+                        let ten_millis = time::Duration::from_millis(1000);
+                        thread::sleep(ten_millis);
+                        
                         println!("In Raymundo's Computer [2406404642]. Message received: {:?}", msg);
                     }
                     Err(_) => {
